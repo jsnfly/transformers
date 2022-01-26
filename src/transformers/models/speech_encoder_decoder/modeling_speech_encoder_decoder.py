@@ -242,6 +242,7 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
         ):
             # encoder outputs might need to be projected to different dimension for decoder
             self.enc_to_dec_proj = nn.Linear(self.encoder.config.hidden_size, self.decoder.config.hidden_size)
+            self.enc_to_dec_proj_ln = nn.LayerNorm(self.decoder.config.hidden_size, eps=self.decoder.config.layer_norm_epsilon)
 
         if self.encoder.get_output_embeddings() is not None:
             raise ValueError(
@@ -445,6 +446,7 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
         self,
         inputs=None,
         attention_mask=None,
+        encoder_attention_mask=None,
         decoder_input_ids=None,
         decoder_attention_mask=None,
         encoder_outputs=None,
@@ -518,13 +520,18 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
         ):
             encoder_hidden_states = self.enc_to_dec_proj(encoder_hidden_states)
 
+            # TODO: make optional
+            encoder_hidden_states += self.decoder.transformer.wpe(
+                torch.arange(0, encoder_hidden_states.shape[1], device=encoder_hidden_states.device)
+            )
+            encoder_hidden_states = self.enc_to_dec_proj_ln(encoder_hidden_states)
+
+        # TODO: Masking seems to lead to bad results atm.
         # compute correct encoder attention mask
-        if attention_mask is not None:
+        if encoder_attention_mask is None and attention_mask is not None:
             encoder_attention_mask = self.encoder._get_feature_vector_attention_mask(
                 encoder_hidden_states.shape[1], attention_mask
             )
-        else:
-            encoder_attention_mask = None
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
@@ -566,9 +573,9 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,
             cross_attentions=decoder_outputs.cross_attentions,
-            encoder_last_hidden_state=encoder_outputs.last_hidden_state,
-            encoder_hidden_states=encoder_outputs.hidden_states,
-            encoder_attentions=encoder_outputs.attentions,
+            encoder_last_hidden_state=encoder_outputs[0],
+            encoder_hidden_states=getattr(encoder_outputs, 'hidden_states', None),  # TODO: only temporary (inconsistant)
+            encoder_attentions=getattr(encoder_outputs, 'attentions', None),
         )
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
