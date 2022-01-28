@@ -220,6 +220,11 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
         self.encoder = encoder
         self.decoder = decoder
 
+        # TODO: make optional.
+        self.encoder_outputs_pos_emb = nn.Embedding(1024, self.decoder.config.hidden_size)
+        with torch.no_grad():
+            self.encoder_outputs_pos_emb.weight.copy_(self.decoder.transformer.wpe.weight)
+
         if self.encoder.config.to_dict() != self.config.encoder.to_dict():
             logger.warning(
                 f"Config of the encoder: {self.encoder.__class__} is overwritten by shared encoder config: {self.config.encoder}"
@@ -521,7 +526,7 @@ class SpeechEncoderDecoderModel(PreTrainedModel):
             encoder_hidden_states = self.enc_to_dec_proj(encoder_hidden_states)
 
             # TODO: make optional
-            encoder_hidden_states += self.decoder.transformer.wpe(
+            encoder_hidden_states += self.encoder_outputs_pos_emb(
                 torch.arange(0, encoder_hidden_states.shape[1], device=encoder_hidden_states.device)
             )
             encoder_hidden_states = self.enc_to_dec_proj_ln(encoder_hidden_states)
